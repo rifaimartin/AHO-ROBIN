@@ -25,10 +25,10 @@ Our research demonstrates significant performance improvements using GPU paralle
 
 ### Contributors
 
-# Christoffel H. Moekoe (christoffelhm@gmail.com)
-Muhammad Rifai (rifaimartinjham@gmail.com)
-Ilham I. Saputra (pewililham13@gmail.com)
-Sofia K. Hanim (Kartikasofia35@gmail.com)
+* Christoffel H. Moekoe (christoffelhm@gmail.com)
+* Muhammad Rifai (rifaimartinjham@gmail.com)
+* Ilham I. Saputra (pewililham13@gmail.com)
+* Sofia K. Hanim (Kartikasofia35@gmail.com)
 
 
 License

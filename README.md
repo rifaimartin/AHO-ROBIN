@@ -2,6 +2,13 @@
 
 This project implements and compares two popular string matching algorithms (Aho-Corasick and Rabin-Karp) in parallel using CUDA for high-performance DNA sequence analysis. The implementation focuses on leveraging GPU acceleration to significantly improve the processing speed of large-scale genomic data.
 
+# Compilation 
+
+* Rabin-Karp : 
+- nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
+- nsys profile -o report --stats=true ../rabinKarpMultipleCuda.exe
+
+
 # Overview
 String matching is a fundamental operation in bioinformatics, especially for DNA sequence analysis. Traditional sequential approaches often struggle with scalability when dealing with large datasets. This project explores how parallelization using NVIDIA's CUDA can enhance the performance of two fundamentally different string-matching approaches:
 

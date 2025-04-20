@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>n8n AI Prompt Test</title>
+</head>
+<body>
+  <h1>Prompt ke AI via n8n</h1>
+  <textarea id="prompt" rows="6" cols="50" placeholder="Tulis prompt di sini..."></textarea><br><br>
+  <button onclick="sendPrompt()">Kirim Prompt</button>
+  <pre id="response"></pre>
+
+  <script>
+    async function sendPrompt() {
+      const prompt = document.getElementById("prompt").value;
+
+      const response = await fetch("https://primary-production-00c4.up.railway.app/webhook/prompt", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ prompt })
+      });
+
+      const data = await response.text(); // kalau hasil dari n8n masih plain text
+      document.getElementById("response").textContent = data;
+    }
+  </script>
+</body>
+</html>

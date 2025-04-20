@@ -1,0 +1,21 @@
+- reportsql_lite
+- repotnativensight
+
+
+apa yang perlu di show?
+
+- Cuda GPU MemOps  Summary (By Size) -> seberapa banyak toward the program biasanya, host to device dan device to host, constant
+- Cuda GPU Memops Summary (By Time) -> berapa lama transfer data, overhead?
+- Cuda GPU Kerne Summary
+
+buat report name nya teratur 
+
+terus compare pake nsight in level code
+
+compare speed up algo sequential nya dan versi parallel, silahkan conduct analisis, bisa jadi juga parallel nya tidak sebagus itu,
+
+kalo dengan cuda biasanya, brp block atau berapa thread yang digunakan Ketika mendesign algo parallel nya atau number of docs sama thread yg digunakan Ketika running di kernel nya di code yg sudah di dapatkan
+
+*kita mau mempercepat suatu function dengan mengubahnya dengan suatu kernel yg bisa di running di GPU
+
+lakukan profiling secara berkal dan ter streukture, untuk bagian input size yg variative dan di recors secara rapih ke dalam excel, contoh table nya di pdf ya! thanks all!!!!

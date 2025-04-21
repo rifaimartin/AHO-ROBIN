@@ -4,9 +4,12 @@ This project implements and compares two popular string matching algorithms (Aho
 
 # Compilation 
 
-* Rabin-Karp : 
+* Rabin-Karp Cuda : 
 - nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
 - nsys profile -o report --stats=true ../rabinKarpMultipleCuda.exe
+
+* Rabin-Karp Sequence :
+- gcc -o rabinKarp rabinKarp.cpp
 
 # Dataset :
 https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40/

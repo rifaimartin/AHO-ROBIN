@@ -8,6 +8,10 @@ This project implements and compares two popular string matching algorithms (Aho
 - nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
 - nsys profile -o report --stats=true ../rabinKarpMultipleCuda.exe
 
+# Dataset :
+https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40/
+
+extracted -> GCA_000001405.29_GRCh38.p14_genomic  -> extract_sequence.py -> python -u extract_sequence.py
 
 # Overview
 String matching is a fundamental operation in bioinformatics, especially for DNA sequence analysis. Traditional sequential approaches often struggle with scalability when dealing with large datasets. This project explores how parallelization using NVIDIA's CUDA can enhance the performance of two fundamentally different string-matching approaches:

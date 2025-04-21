@@ -40,18 +40,7 @@ Our research demonstrates significant performance improvements using GPU paralle
 | Aho-Corasick | 10M        | 1,656                  | 3.51            | 471.5×     |
 | Rabin-Karp   | 10M        | 3,288                  | 13.49            | 243.7×    |
 
-GPU Specifications:
-
-| NVIDIA-SMI 572.61                 Driver Version: 572.61         CUDA Version: 12.8     |
-|-----------------------------------------+------------------------+----------------------+
-| GPU  Name                  Driver-Model | Bus-Id          Disp.A | Volatile Uncorr. ECC |
-| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
-|                                         |                        |               MIG M. |
-|=========================================+========================+======================|
-|   0  NVIDIA GeForce GTX 1660 Ti   WDDM  |   00000000:01:00.0  On |                  N/A |
-| N/A   46C    P8              5W /   80W |     771MiB /   6144MiB |      1%      Default |
-|                                         |                        |                  N/A |
-+-----------------------------------------+------------------------+----------------------+
+GPU: NVIDIA GeForce GTX 1660 Ti (6GB VRAM, CUDA 12.8)
 
 The dataset used was NCBI GenBank human genome sequence (10 million base pairs). Both algorithms found identical matches (361,590) across all tested patterns, confirming implementation correctness. Aho-Corasick achieved superior performance in both sequential and parallel implementations, with the GPU-accelerated version demonstrating a remarkable 471.5× speedup over its sequential counterpart.
 

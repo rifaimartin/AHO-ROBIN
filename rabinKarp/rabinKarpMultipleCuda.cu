@@ -1,167 +1,65 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <cuda_runtime.h>
+#include <math.h>
 #include <time.h>
+#include <cuda_runtime.h>
 
-// Maximum buffer sizes
 #define MAX_TEXT_SIZE 2000000  // Increased for 1M file
-#define MAX_PATTERNS 100
-#define MAX_PATTERN_LENGTH 100
-#define THREADS_PER_BLOCK 256
+#define MAX_DISPLAY 20         // Maximum number of matches to display
+#define THREADS_PER_BLOCK 256  // Number of threads per block
+#define MAX_PATTERN_LENGTH 100 // Maximum pattern length
 
-// Structure to store pattern data
-typedef struct {
-    char pattern[MAX_PATTERN_LENGTH];
-    int length;
-    int hash;
-} PatternData;
-
-// Function to compute hash on CPU
-__host__ int computeHash(const char* str, int length, int d, int q) {
-    int hash = 0;
-    for (int i = 0; i < length; i++) {
-        hash = (d * hash + str[i]) % q;
-    }
-    return hash;
-}
-
-// CPU function for result verification (to measure accuracy)
-void cpuRabinKarp(const char* text, int text_length, const PatternData* patterns, int pattern_count, 
-                  int d, int q, int* results, int* result_count) {
-    *result_count = 0;
+// CUDA kernel for computing hash values and initial matching
+__global__ void compute_initial_hashes(char *d_text, int text_length, char *d_pattern, 
+                                      int pattern_length, int pattern_hash, int d, int q, int h, 
+                                      int *d_matches, int *d_positions, int *d_match_count) {
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
     
-    for (int i = 0; i < text_length; i++) {
-        for (int j = 0; j < pattern_count; j++) {
-            int pattern_length = patterns[j].length;
-            
-            if (i + pattern_length > text_length) continue;
-            
-            // Calculate hash for current text window
-            int text_hash = 0;
-            for (int k = 0; k < pattern_length; k++) {
-                text_hash = (d * text_hash + text[i + k]) % q;
+    if (i <= text_length - pattern_length) {
+        // Compute hash for this text window
+        int text_hash = 0;
+        for (int j = 0; j < pattern_length; j++) {
+            text_hash = (d * text_hash + d_text[i + j]) % q;
+        }
+        
+        // Check if hash matches the pattern hash
+        if (text_hash == pattern_hash) {
+            // Check for exact character match
+            bool is_match = true;
+            for (int j = 0; j < pattern_length; j++) {
+                if (d_text[i + j] != d_pattern[j]) {
+                    is_match = false;
+                    break;
+                }
             }
             
-            if (text_hash == patterns[j].hash) {
-                bool match = true;
-                for (int k = 0; k < pattern_length; k++) {
-                    if (text[i + k] != patterns[j].pattern[k]) {
-                        match = false;
-                        break;
-                    }
+            if (is_match) {
+                // Atomic operation to safely update shared match count
+                int idx = atomicAdd(d_match_count, 1);
+                if (idx < MAX_DISPLAY) {
+                    d_positions[idx] = i;
                 }
-                
-                if (match) {
-                    results[2 * (*result_count)] = i;
-                    results[2 * (*result_count) + 1] = j;
-                    (*result_count)++;
-                }
+                atomicAdd(d_matches, 1);
             }
         }
     }
 }
 
-// CUDA kernel for Rabin-Karp pattern matching
-__global__ void rabinKarpKernel(const char* text, int text_length, const PatternData* patterns, 
-                               int pattern_count, int d, int q, int* results, int* result_count) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    int stride = blockDim.x * gridDim.x;
-    
-    for (int i = idx; i < text_length; i += stride) {
-        // Each thread starts from a different position in the text
-        for (int j = 0; j < pattern_count; j++) {
-            int pattern_length = patterns[j].length;
-            
-            // Make sure we don't go beyond text bounds
-            if (i + pattern_length > text_length) continue;
-            
-            // Calculate hash for current text window
-            int text_hash = 0;
-            for (int k = 0; k < pattern_length; k++) {
-                text_hash = (d * text_hash + text[i + k]) % q;
-            }
-            
-            // If hash matches, verify character by character
-            if (text_hash == patterns[j].hash) {
-                bool match = true;
-                for (int k = 0; k < pattern_length; k++) {
-                    if (text[i + k] != patterns[j].pattern[k]) {
-                        match = false;
-                        break;
-                    }
-                }
-                
-                if (match) {
-                    // Use atomicAdd to avoid race conditions when adding results
-                    int pos = atomicAdd(result_count, 1);
-                    if (pos < MAX_TEXT_SIZE) { // Ensure we don't exceed results buffer capacity
-                        results[2*pos] = i;     // Store match position
-                        results[2*pos+1] = j;   // Store index of matching pattern
-                    }
-                }
-            }
-        }
-    }
-}
+// Function to compute pattern hash on CPU
+int compute_hash(char *str, int length, int d, int q) {
+    int i = 0;
+    int hash_value = 0;
 
-// Function to measure execution time
-double getExecutionTime(clock_t start, clock_t end) {
-    return ((double) (end - start)) / CLOCKS_PER_SEC * 1000.0; // Convert to milliseconds
-}
+    for (i = 0; i < length; ++i) {
+        hash_value = (d * hash_value + str[i]) % q;
+    }
 
-// Function to check if CPU and GPU results match
-bool compareResults(int* cpu_results, int cpu_count, int* gpu_results, int gpu_count) {
-    if (cpu_count != gpu_count) {
-        printf("Result count mismatch: CPU=%d, GPU=%d\n", cpu_count, gpu_count);
-        return false;
-    }
-    
-    // Sort results for comparison (simple implementation)
-    for (int i = 0; i < cpu_count; i++) {
-        for (int j = i + 1; j < cpu_count; j++) {
-            if (cpu_results[2*i] > cpu_results[2*j] || 
-                (cpu_results[2*i] == cpu_results[2*j] && cpu_results[2*i+1] > cpu_results[2*j+1])) {
-                // Swap positions
-                int temp1 = cpu_results[2*i];
-                int temp2 = cpu_results[2*i+1];
-                cpu_results[2*i] = cpu_results[2*j];
-                cpu_results[2*i+1] = cpu_results[2*j+1];
-                cpu_results[2*j] = temp1;
-                cpu_results[2*j+1] = temp2;
-            }
-        }
-    }
-    
-    for (int i = 0; i < gpu_count; i++) {
-        for (int j = i + 1; j < gpu_count; j++) {
-            if (gpu_results[2*i] > gpu_results[2*j] || 
-                (gpu_results[2*i] == gpu_results[2*j] && gpu_results[2*i+1] > gpu_results[2*j+1])) {
-                // Swap positions
-                int temp1 = gpu_results[2*i];
-                int temp2 = gpu_results[2*i+1];
-                gpu_results[2*i] = gpu_results[2*j];
-                gpu_results[2*i+1] = gpu_results[2*j+1];
-                gpu_results[2*j] = temp1;
-                gpu_results[2*j+1] = temp2;
-            }
-        }
-    }
-    
-    // Compare sorted results
-    for (int i = 0; i < cpu_count; i++) {
-        if (cpu_results[2*i] != gpu_results[2*i] || cpu_results[2*i+1] != gpu_results[2*i+1]) {
-            printf("Mismatch at index %d: CPU=(%d,%d), GPU=(%d,%d)\n", 
-                   i, cpu_results[2*i], cpu_results[2*i+1], gpu_results[2*i], gpu_results[2*i+1]);
-            return false;
-        }
-    }
-    
-    return true;
+    return hash_value;
 }
 
 // Function to read text file content
-char* readTextFile(const char* filename, int* length) {
+char* read_text_file(const char* filename, int* length) {
     FILE* file = fopen(filename, "r");
     if (file == NULL) {
         printf("Error opening file: %s\n", filename);
@@ -190,124 +88,137 @@ char* readTextFile(const char* filename, int* length) {
     return buffer;
 }
 
-int main() {
-    // Path to the human_1m_upper.txt file
+// CUDA error checking helper function
+void checkCudaError(cudaError_t err, const char* msg) {
+    if (err != cudaSuccess) {
+        fprintf(stderr, "%s: %s\n", msg, cudaGetErrorString(err));
+        exit(EXIT_FAILURE);
+    }
+}
+
+int main(int argc, char *argv[]) {
+    char pattern[MAX_PATTERN_LENGTH];
+    char *d_pattern;  // Device copy of pattern
+    char *d_text;     // Device copy of text
+    int *d_matches;   // Device total match counter
+    int *d_positions; // Device array to store match positions
+    int *d_match_count; // Device counter for number of displayed matches
+    
+    int d = 256;      // Number of characters in the alphabet
+    int q = 101;      // A prime number for hash calculation
+    char* text;
+    int text_length;
+    int pattern_length;
+    int matches = 0;
+    int match_count = 0;
+    int positions[MAX_DISPLAY];
+    
+    clock_t start_time, end_time;
+    double execution_time;
+    float gpu_execution_time;
+    cudaEvent_t gpu_start, gpu_end;
+    
     const char* filename = "human_1m_upper.txt";
     
-    // Patterns to search for
-    const char* patterns[] = {"TGCGATA", "TGTG", "AAAG", "TCGCT", "AAGG"};
-    int num_patterns = 5;
+    strcpy(pattern, "TCGTG");
+    pattern_length = strlen(pattern);
     
-    // Read text file
-    int text_length;
-    char* text = readTextFile(filename, &text_length);
-    printf("Read %d characters from %s\n", text_length, filename);
+    printf("Reading file: %s\n", filename);
+    printf("Searching for pattern: %s\n", pattern);
     
-    int d = 256; // Alphabet size
-    int q = 101; // Prime number for hash
+    // Read the file content
+    text = read_text_file(filename, &text_length);
+    printf("Read %d characters from file\n", text_length);
     
-    // Allocate memory for pattern data on host
-    PatternData* h_patterns = (PatternData*)malloc(num_patterns * sizeof(PatternData));
+    // Measure total execution time including memory transfers
+    start_time = clock();
     
-    // Initialize pattern data
-    for (int i = 0; i < num_patterns; i++) {
-        strncpy(h_patterns[i].pattern, patterns[i], MAX_PATTERN_LENGTH);
-        h_patterns[i].length = strlen(patterns[i]);
-        h_patterns[i].hash = computeHash(patterns[i], h_patterns[i].length, d, q);
+    // Create CUDA events for GPU timing
+    cudaEventCreate(&gpu_start);
+    cudaEventCreate(&gpu_end);
+    
+    // Allocate device memory
+    checkCudaError(cudaMalloc((void**)&d_text, text_length * sizeof(char)), 
+                   "Failed to allocate device memory for text");
+    checkCudaError(cudaMalloc((void**)&d_pattern, pattern_length * sizeof(char)), 
+                   "Failed to allocate device memory for pattern");
+    checkCudaError(cudaMalloc((void**)&d_matches, sizeof(int)), 
+                   "Failed to allocate device memory for matches counter");
+    checkCudaError(cudaMalloc((void**)&d_positions, MAX_DISPLAY * sizeof(int)), 
+                   "Failed to allocate device memory for positions");
+    checkCudaError(cudaMalloc((void**)&d_match_count, sizeof(int)), 
+                   "Failed to allocate device memory for match count");
+    
+    // Copy data to device
+    checkCudaError(cudaMemcpy(d_text, text, text_length * sizeof(char), cudaMemcpyHostToDevice), 
+                   "Failed to copy text to device");
+    checkCudaError(cudaMemcpy(d_pattern, pattern, pattern_length * sizeof(char), cudaMemcpyHostToDevice), 
+                   "Failed to copy pattern to device");
+    
+    // Compute pattern hash on CPU
+    int pattern_hash = compute_hash(pattern, pattern_length, d, q);
+    
+    // Initialize counters
+    checkCudaError(cudaMemset(d_matches, 0, sizeof(int)), "Failed to initialize matches counter");
+    checkCudaError(cudaMemset(d_match_count, 0, sizeof(int)), "Failed to initialize match count");
+    
+    // Calculate h = d^(pattern_length-1) % q
+    int h = 1;
+    for (int i = 0; i < pattern_length - 1; i++) {
+        h = (h * d) % q;
     }
     
-    // Allocate memory on GPU
-    char* d_text;
-    PatternData* d_patterns;
-    int* d_results;
-    int* d_result_count;
+    // Calculate number of blocks needed
+    int num_blocks = (text_length - pattern_length + 1 + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
     
-    cudaMalloc((void**)&d_text, text_length * sizeof(char));
-    cudaMalloc((void**)&d_patterns, num_patterns * sizeof(PatternData));
-    cudaMalloc((void**)&d_results, 2 * MAX_TEXT_SIZE * sizeof(int)); // To store (position, pattern index)
-    cudaMalloc((void**)&d_result_count, sizeof(int));
+    // Start GPU timing
+    cudaEventRecord(gpu_start);
     
-    // Copy data to GPU
-    cudaMemcpy(d_text, text, text_length * sizeof(char), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_patterns, h_patterns, num_patterns * sizeof(PatternData), cudaMemcpyHostToDevice);
-    cudaMemset(d_result_count, 0, sizeof(int));
+    // Launch kernel
+    compute_initial_hashes<<<num_blocks, THREADS_PER_BLOCK>>>(
+        d_text, text_length, d_pattern, pattern_length, pattern_hash, d, q, h, 
+        d_matches, d_positions, d_match_count);
     
-    // Kernel configuration
-    int blocks = (text_length + THREADS_PER_BLOCK - 1) / THREADS_PER_BLOCK;
-    // Limit the number of blocks to prevent too much resource allocation
-    if (blocks > 1024) blocks = 1024;
+    // Check for kernel launch errors
+    checkCudaError(cudaGetLastError(), "Kernel launch failed");
     
-    printf("Launching kernel with %d blocks and %d threads per block\n", blocks, THREADS_PER_BLOCK);
+    // Wait for kernel to complete
+    checkCudaError(cudaDeviceSynchronize(), "Kernel synchronization failed");
     
-    // Measure GPU execution time
-    clock_t gpu_start, gpu_end;
-    gpu_start = clock();
-    
-    // Run kernel
-    rabinKarpKernel<<<blocks, THREADS_PER_BLOCK>>>(d_text, text_length, d_patterns, num_patterns, d, q, d_results, d_result_count);
-    
-    // Wait for kernel to finish
-    cudaDeviceSynchronize();
-    
-    gpu_end = clock();
-    double gpu_time = getExecutionTime(gpu_start, gpu_end);
-    
-    // Check for CUDA errors
-    cudaError_t err = cudaGetLastError();
-    if (err != cudaSuccess) {
-        printf("CUDA Error: %s\n", cudaGetErrorString(err));
-        return -1;
-    }
+    // End GPU timing
+    cudaEventRecord(gpu_end);
+    cudaEventSynchronize(gpu_end);
+    cudaEventElapsedTime(&gpu_execution_time, gpu_start, gpu_end);
     
     // Copy results back to host
-    int h_gpu_result_count;
-    int* h_gpu_results = (int*)malloc(2 * MAX_TEXT_SIZE * sizeof(int));
+    checkCudaError(cudaMemcpy(&matches, d_matches, sizeof(int), cudaMemcpyDeviceToHost), 
+                   "Failed to copy matches back to host");
+    checkCudaError(cudaMemcpy(&match_count, d_match_count, sizeof(int), cudaMemcpyDeviceToHost), 
+                   "Failed to copy match count back to host");
+    checkCudaError(cudaMemcpy(positions, d_positions, MAX_DISPLAY * sizeof(int), cudaMemcpyDeviceToHost), 
+                   "Failed to copy positions back to host");
     
-    cudaMemcpy(&h_gpu_result_count, d_result_count, sizeof(int), cudaMemcpyDeviceToHost);
-    cudaMemcpy(h_gpu_results, d_results, 2 * h_gpu_result_count * sizeof(int), cudaMemcpyDeviceToHost);
-    
-    // Measure CPU execution time for comparison
-    clock_t cpu_start, cpu_end;
-    int h_cpu_result_count;
-    int* h_cpu_results = (int*)malloc(2 * MAX_TEXT_SIZE * sizeof(int));
-    
-    printf("Running CPU implementation for comparison...\n");
-    cpu_start = clock();
-    cpuRabinKarp(text, text_length, h_patterns, num_patterns, d, q, h_cpu_results, &h_cpu_result_count);
-    cpu_end = clock();
-    double cpu_time = getExecutionTime(cpu_start, cpu_end);
-    
-    // Display results
-    printf("========= SEARCH RESULTS =========\n");
-    printf("Patterns found (showing first 20):\n");
-    int display_count = h_gpu_result_count > 20 ? 20 : h_gpu_result_count;
+    // Display matches
+    int display_count = match_count > MAX_DISPLAY ? MAX_DISPLAY : match_count;
     for (int i = 0; i < display_count; i++) {
-        int position = h_gpu_results[2*i];
-        int pattern_idx = h_gpu_results[2*i+1];
-        printf("Pattern \"%s\" found at position %d\n", 
-               patterns[pattern_idx], position);
+        printf("Pattern found at index %d\n", positions[i]);
     }
     
-    // Compare CPU and GPU results to measure accuracy
-    bool accurate = compareResults(h_cpu_results, h_cpu_result_count, h_gpu_results, h_gpu_result_count);
+    end_time = clock();
+    execution_time = ((double) (end_time - start_time)) / CLOCKS_PER_SEC * 1000.0; // milliseconds
     
-    // Display performance statistics
-    printf("\n========= PERFORMANCE STATISTICS =========\n");
-    printf("CPU execution time: %.3f ms\n", cpu_time);
-    printf("GPU execution time: %.3f ms\n", gpu_time);
-    printf("Speedup: %.2fx\n", cpu_time / gpu_time);
-    printf("Accuracy: %s\n", accurate ? "100% (All results match)" : "Inaccurate (Results differ)");
-    printf("Total matches found: %d\n", h_gpu_result_count);
+    printf("Total matches found: %d\n", matches);
+    printf("Execution time: %.2f ms\n", execution_time);
     
-    // Clean up memory
-    free(text);
-    free(h_patterns);
-    free(h_gpu_results);
-    free(h_cpu_results);
+    // Clean up
     cudaFree(d_text);
-    cudaFree(d_patterns);
-    cudaFree(d_results);
-    cudaFree(d_result_count);
+    cudaFree(d_pattern);
+    cudaFree(d_matches);
+    cudaFree(d_positions);
+    cudaFree(d_match_count);
+    cudaEventDestroy(gpu_start);
+    cudaEventDestroy(gpu_end);
+    free(text);
     
     return 0;
 }

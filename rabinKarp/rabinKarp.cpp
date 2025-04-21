@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
     
     const char* filename = "human_1m_upper.txt";
   
-    strcpy(pattern, "TCGTG");
+    strcpy(pattern, "GGGCA");
     printf("Reading file: %s\n", filename);
     printf("Searching for pattern: %s\n", pattern);
     

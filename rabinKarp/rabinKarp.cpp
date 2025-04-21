@@ -190,7 +190,7 @@ int main(int argc, char *argv[])
     clock_t start_time, end_time;
     double execution_time;
     
-    const char* text_filename = "human_1m_upper.txt";
+    const char* text_filename = "human_10m_upper.txt";
     const char* pattern_filename = "pattern.txt";
     
     printf("Reading text file: %s\n", text_filename);

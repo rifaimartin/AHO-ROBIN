@@ -73,7 +73,7 @@ void buildFailTransitions(TrieNode* root) {
     }
 }
 
-vector<pair<int, int>> search(const string& text, const vector<string>& patterns) {
+vector<pair<int, int>> search(const string& text, const vector<string>& patterns, vector<int>& pattern_counts) {
     vector<pair<int, int>> matches; // Store start and end indices of matches
 
     TrieNode* root = new TrieNode();
@@ -107,11 +107,14 @@ vector<pair<int, int>> search(const string& text, const vector<string>& patterns
         // Check if current state contains any output
         for (int patternIndex : current->output) {
             int startIdx = i - (patterns[patternIndex].size() - 1);
-            matches.push_back(make_pair(startIdx, i));
+            matches.push_back(make_pair(startIdx, patternIndex));
+            
+            // Increment the count for this pattern
+            pattern_counts[patternIndex]++;
             
             // Display match info with limit
             if (display_count < MAX_DISPLAY) {
-                cout << "Pattern found at index " << startIdx << endl;
+                cout << "Pattern '" << patterns[patternIndex] << "' found at index " << startIdx << endl;
                 display_count++;
                 
                 if (display_count == MAX_DISPLAY && matches.size() > MAX_DISPLAY) {
@@ -143,30 +146,73 @@ string read_text_file(const char* filename, int* length) {
     return content;
 }
 
+// Read patterns from file (comma-separated)
+vector<string> read_patterns_file(const char* filename) {
+    vector<string> patterns;
+    ifstream file(filename);
+    
+    if (!file.is_open()) {
+        cout << "Error opening patterns file: " << filename << endl;
+        exit(1);
+    }
+    
+    string line;
+    if (getline(file, line)) {
+        // Parse comma-separated patterns
+        stringstream ss(line);
+        string pattern;
+        
+        while (getline(ss, pattern, ',')) {
+            patterns.push_back(pattern);
+        }
+    } else {
+        cout << "Pattern file is empty!" << endl;
+    }
+    
+    file.close();
+    return patterns;
+}
+
 int main() {
     clock_t start_time = clock();
     
-    const char* filename = "human_1m_upper.txt";
+    const char* text_filename = "human_10m_upper.txt";
+    const char* pattern_filename = "pattern.txt";
     int text_length = 0;
     
-    cout << "Reading file: " << filename << endl;
+    cout << "Reading file: " << text_filename << endl;
     
     // Read the file content
-    string text = read_text_file(filename, &text_length);
+    string text = read_text_file(text_filename, &text_length);
     cout << "Read " << text_length << " characters from file" << endl;
     
-    // Define patterns to search for
-    vector<string> patterns = {"GGA"};
-    cout << "Searching for pattern: " << patterns[0] << endl;
+    // Read patterns from file
+    vector<string> patterns = read_patterns_file(pattern_filename);
+    cout << "Loaded " << patterns.size() << " patterns from " << pattern_filename << ":" << endl;
+    
+    for (const auto& pattern : patterns) {
+        cout << "  - " << pattern << endl;
+    }
+    
+    // Initialize pattern match counts
+    vector<int> pattern_counts(patterns.size(), 0);
     
     // Run the Aho-Corasick algorithm
-    vector<pair<int, int>> result = search(text, patterns);
+    vector<pair<int, int>> result = search(text, patterns, pattern_counts);
     
     // Calculate execution time
     clock_t end_time = clock();
     double execution_time = ((double)(end_time - start_time)) / CLOCKS_PER_SEC * 1000.0; // milliseconds
     
-    cout << "Total matches found: " << result.size() << endl;
+    // Output match counts for each pattern
+    cout << "\nMatch counts per pattern:" << endl;
+    int total_matches = 0;
+    for (size_t i = 0; i < patterns.size(); i++) {
+        cout << "Pattern '" << patterns[i] << "': " << pattern_counts[i] << " matches" << endl;
+        total_matches += pattern_counts[i];
+    }
+    
+    cout << "Total matches found across all patterns: " << total_matches << endl;
     cout << "Execution time: " << execution_time << " ms" << endl;
     
     return 0;

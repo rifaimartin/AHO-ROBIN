@@ -142,7 +142,7 @@ int compute_hash_cpu(char *str, int length, int d, int q) {
 }
 
 int main() {
-    const char* text_filename = "human_1m_upper.txt";
+    const char* text_filename = "human_10m_upper.txt";
     const char* pattern_filename = "pattern.txt";
     int d = 256, q = 101;
 

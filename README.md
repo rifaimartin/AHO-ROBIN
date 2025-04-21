@@ -6,19 +6,19 @@ This project implements and compares two popular string matching algorithms (Aho
 
 * Rabin-Karp Cuda : 
 - nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
-- nsys profile -o report-robinKarp-1juta --stats=true ../rabinKarpMultipleCuda.exe
+- nsys profile -o report-robinKarp-1juta --stats=true ./rabinKarpCuda.exe
 - nsys stats report-robinKarp-1juta.nsys-rep --report summary --format csv -o summary_output_report-robinKarp-1juta.nsys-rep
 
 * Aho-Corasick Cuda : 
 - nvcc -o AhoCorasickCuda AhoCorasickCuda.cu
-- nsys profile -o report-AhoCorasickCuda-1juta --stats=true ../AhoCorasickCuda.exe
+- nsys profile -o report-AhoCorasickCuda-1juta --stats=true ./AhoCorasickCuda.exe
 - nsys stats report-AhoCorasickCuda-1juta.nsys-rep --report summary --format csv -o summary_output_report-AhoCorasickCuda-1juta.nsys-rep
 
 * Rabin-Karp Sequence :
 - gcc -o rabinKarp rabinKarp.cpp
 
 * Aho-Corrasic Sequence :
-- gcc -o AhoCorasickFixed AhoCorasickFixed.cpp
+- g++ -o AhoCorasickFixed AhoCorasickFixed.cpp
 
 # Dataset :
 https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40/

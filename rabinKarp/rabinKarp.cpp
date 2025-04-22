@@ -5,8 +5,8 @@
 #include <time.h>
 
 #define MAX_TEXT_SIZE 2000000  // Increased for 1M file
-#define MAX_PATTERN_SIZE 100
-#define MAX_PATTERNS 100
+#define MAX_PATTERN_SIZE 1024
+#define MAX_PATTERNS 1024
 #define MAX_DISPLAY 20  // Maximum number of matches to display
 
 typedef struct {
@@ -42,27 +42,32 @@ int read_patterns_file(const char* filename, PatternInfo* patterns)
         exit(1);
     }
 
-    char line[1024];
-    if (fgets(line, sizeof(line), file) == NULL) {
-        printf("Error reading patterns file or file is empty\n");
+    // Allocate a much larger buffer for reading patterns
+    char* buffer = (char*)malloc(MAX_PATTERNS * MAX_PATTERN_SIZE);
+    if (!buffer) {
+        printf("Memory allocation failed\n");
         fclose(file);
         exit(1);
     }
+    
+    // Read the entire file into the buffer
+    size_t bytes_read = fread(buffer, 1, MAX_PATTERNS * MAX_PATTERN_SIZE - 1, file);
+    buffer[bytes_read] = '\0';  // Null-terminate
     fclose(file);
 
     // Remove newline if present
-    int len = strlen(line);
-    if (len > 0 && (line[len-1] == '\n' || line[len-1] == '\r')) {
-        line[len-1] = '\0';
+    int len = strlen(buffer);
+    if (len > 0 && (buffer[len-1] == '\n' || buffer[len-1] == '\r')) {
+        buffer[len-1] = '\0';
         len--;
     }
-    if (len > 0 && line[len-1] == '\r') {
-        line[len-1] = '\0';
+    if (len > 0 && buffer[len-1] == '\r') {
+        buffer[len-1] = '\0';
     }
 
     // Parse the comma-separated patterns
     int pattern_count = 0;
-    char* token = strtok(line, ",");
+    char* token = strtok(buffer, ",");
     while (token != NULL && pattern_count < MAX_PATTERNS) {
         strcpy(patterns[pattern_count].pattern, token);
         patterns[pattern_count].length = strlen(token);
@@ -70,6 +75,7 @@ int read_patterns_file(const char* filename, PatternInfo* patterns)
         pattern_count++;
     }
 
+    free(buffer);
     return pattern_count;
 }
 

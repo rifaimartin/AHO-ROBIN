@@ -11,23 +11,23 @@
 using namespace std;
 
 // Maximum number of states in the Aho-Corasick automaton
-#define MAX_STATES 4096
-// Maximum number of characters in the alphabet (ASCII)
+// Constants that won't change
+#define MAX_STATES 8192  // Increased from 4096 to handle more complex automaton
 #define MAX_CHARS 256
-// Maximum number of patterns
-#define MAX_PATTERNS 100
-// Maximum pattern length
 #define MAX_PATTERN_LENGTH 100
-// Maximum matches to display
 #define MAX_DISPLAY 20
-// Number of threads per block
 #define THREADS_PER_BLOCK 256
+#define MAX_FAIL_ITERATIONS 100
+#define MAX_TEXT_CHUNK 1000
 
-// State representation for GPU
+// This will be set dynamically based on pattern count
+int MAX_PATTERNS = 1024; // Default, will be adjusted based on actual pattern count
+
+// State representation for GPU with dynamic pattern size
 struct GPUTrieState {
     int transitions[MAX_CHARS];  // Transition function
     int fail;                    // Failure function
-    int output[MAX_PATTERNS];    // Output function (pattern indices)
+    int* output;                 // Output function (pattern indices) - dynamically allocated
     int output_count;           // Number of patterns in output
 };
 
@@ -101,7 +101,6 @@ void buildFailTransitions(TrieNode* root) {
 
             // Do NOT merge output from fail node, as this causes double counting
             // The fail transitions will be followed at runtime instead
-            // This was causing multiple counts for the same match
         }
     }
 }
@@ -117,6 +116,12 @@ void convertTrieToGPU(TrieNode* root, GPUTrieState* gpuStates, int& numStates,
         }
         gpuStates[i].fail = 0; // Default fail to root
         gpuStates[i].output_count = 0;
+        
+        // Allocate output array dynamically based on MAX_PATTERNS
+        gpuStates[i].output = new int[MAX_PATTERNS];
+        for (int j = 0; j < MAX_PATTERNS; j++) {
+            gpuStates[i].output[j] = -1; // Initialize to invalid pattern ID
+        }
     }
     
     // Assign state IDs to nodes with BFS
@@ -137,6 +142,10 @@ void convertTrieToGPU(TrieNode* root, GPUTrieState* gpuStates, int& numStates,
             
             // If this child hasn't been assigned a state ID yet
             if (nodeToState.find(child) == nodeToState.end()) {
+                if (numStates >= MAX_STATES) {
+                    printf("ERROR: Exceeded maximum number of states (%d). Increase MAX_STATES.\n", MAX_STATES);
+                    exit(1);
+                }
                 nodeToState[child] = numStates++;
                 q.push(child);
             }
@@ -155,6 +164,51 @@ void convertTrieToGPU(TrieNode* root, GPUTrieState* gpuStates, int& numStates,
         if (node != root) {
             gpuStates[stateId].fail = nodeToState[node->fail];
         }
+    }
+}
+
+// Verify the GPU automaton structure
+void verifyAutomaton(GPUTrieState* states, int numStates) {
+    printf("Verifying automaton structure with %d states...\n", numStates);
+    
+    int warnings = 0;
+    int errors = 0;
+    
+    for (int i = 0; i < numStates; i++) {
+        int hasValidTransition = 0;
+        for (int j = 0; j < MAX_CHARS; j++) {
+            if (states[i].transitions[j] != -1) {
+                if (states[i].transitions[j] < 0 || states[i].transitions[j] >= numStates) {
+                    printf("Error: State %d has invalid transition on char %d to state %d\n", 
+                           i, j, states[i].transitions[j]);
+                    errors++;
+                } else {
+                    hasValidTransition = 1;
+                }
+            }
+        }
+        
+        if (!hasValidTransition && i != 0) {
+            printf("Warning: State %d has no valid transitions!\n", i);
+            warnings++;
+        }
+        
+        if (states[i].fail < 0 || states[i].fail >= numStates) {
+            printf("Error: State %d has invalid fail state: %d\n", i, states[i].fail);
+            errors++;
+        }
+        
+        if (states[i].output_count < 0 || states[i].output_count > MAX_PATTERNS) {
+            printf("Error: State %d has invalid output_count: %d\n", i, states[i].output_count);
+            errors++;
+        }
+    }
+    
+    printf("Verification complete. Found %d warnings and %d errors.\n", warnings, errors);
+    
+    if (errors > 0) {
+        printf("ERROR: Automaton structure is invalid. Fix before proceeding.\n");
+        exit(1);
     }
 }
 
@@ -203,85 +257,155 @@ vector<string> read_patterns_file(const char* filename) {
     
     file.close();
     
-    // Check if we have too many patterns for our GPU structure
-    if (patterns.size() > MAX_PATTERNS) {
-        cout << "Warning: Found " << patterns.size() << " patterns, but can only use the first " 
-             << MAX_PATTERNS << " due to GPU memory constraints." << endl;
-        patterns.resize(MAX_PATTERNS);
-    }
+    // Set the global MAX_PATTERNS value based on actual pattern count
+    // Add some padding for safety
+    MAX_PATTERNS = patterns.size() + 16;
+    printf("Setting MAX_PATTERNS to %d based on %zu patterns found\n", 
+           MAX_PATTERNS, patterns.size());
     
     return patterns;
 }
 
-// CUDA kernel for Aho-Corasick search
+// Simple kernel to test CUDA functionality
+__global__ void testKernel(int* output) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid == 0) {
+        output[0] = 42;
+    }
+}
+
+// CUDA kernel for Aho-Corasick search with unified memory for output arrays
 __global__ void ahoCorasickKernel(char* text, int textLength, GPUTrieState* states, 
                                 int numStates, int* matches, int* matchCount, 
                                 int* matchPositions, int* matchPatternIds, int maxMatches, 
-                                int* patternLengths, int patternCount) {
+                                int* patternLengths, int patternCount, int** stateOutputs) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
     
     for (int startPos = tid; startPos < textLength; startPos += stride) {
         int currentState = 0; // Start from the root
         
-        for (int i = startPos; i < textLength; i++) {
+        // Process at most MAX_TEXT_CHUNK characters from this starting position
+        for (int i = startPos; i < textLength && i < startPos + MAX_TEXT_CHUNK; i++) {
             unsigned char c = (unsigned char)text[i];
             
-            // Follow failure links until we find a match or reach root
-            while (currentState != 0 && states[currentState].transitions[c] == -1) {
-                currentState = states[currentState].fail;
-            }
-            
-            // Check if there's a valid transition
-            if (states[currentState].transitions[c] != -1) {
-                currentState = states[currentState].transitions[c];
-            }
-            
-            // Check for pattern matches in the current state
-            for (int j = 0; j < states[currentState].output_count; j++) {
-                int patternIndex = states[currentState].output[j];
-                int patternLength = patternLengths[patternIndex];
-                int matchPos = i - patternLength + 1;
+            // Follow failure links until we find a match or reach root - with iteration limit
+            int failIterations = 0;
+            while (currentState != 0 && currentState < numStates && 
+                  (c < MAX_CHARS && states[currentState].transitions[c] == -1) && 
+                   failIterations < MAX_FAIL_ITERATIONS) {
                 
-                // Only process matches that start at our assigned position
-                if (matchPos == startPos) {
-                    // Increment per-pattern match count
-                    atomicAdd(&matches[patternIndex], 1);
-                    
-                    // Record for display
-                    int idx = atomicAdd(matchCount, 1);
-                    if (idx < maxMatches) {
-                        matchPositions[idx] = matchPos;
-                        matchPatternIds[idx] = patternIndex;
-                    }
+                int nextState = states[currentState].fail;
+                // Basic bounds checking
+                if (nextState < 0 || nextState >= numStates) {
+                    currentState = 0; // Reset to root if invalid fail state
+                    break;
+                }
+                
+                currentState = nextState;
+                failIterations++;
+            }
+            
+            // If we hit the iteration limit, reset to root state
+            if (failIterations == MAX_FAIL_ITERATIONS) {
+                currentState = 0;
+            }
+            
+            // Check if there's a valid transition - with bounds checking
+            if (currentState < numStates && c < MAX_CHARS && states[currentState].transitions[c] != -1) {
+                int nextState = states[currentState].transitions[c];
+                // Validate the next state
+                if (nextState >= 0 && nextState < numStates) {
+                    currentState = nextState;
+                } else {
+                    currentState = 0; // Reset to root if invalid transition
                 }
             }
             
-            // Now check all fail states for matches too
-            int failState = states[currentState].fail;
-            while (failState != 0) {
-                for (int j = 0; j < states[failState].output_count; j++) {
-                    int patternIndex = states[failState].output[j];
-                    int patternLength = patternLengths[patternIndex];
-                    int matchPos = i - patternLength + 1;
+            // Safety check for current state
+            if (currentState < 0 || currentState >= numStates) {
+                currentState = 0;
+                continue;
+            }
+            
+            // Check for pattern matches in the current state - with bounds checking
+            int outputCount = states[currentState].output_count;
+            if (outputCount > 0 && outputCount <= patternCount) {
+                int* outputs = stateOutputs[currentState];
+                for (int j = 0; j < outputCount; j++) {
+                    int patternIndex = outputs[j];
                     
-                    // Only process matches that start at our assigned position
-                    if (matchPos == startPos) {
-                        // Increment per-pattern match count
-                        atomicAdd(&matches[patternIndex], 1);
+                    // Validate pattern index
+                    if (patternIndex >= 0 && patternIndex < patternCount) {
+                        int patternLength = patternLengths[patternIndex];
+                        int matchPos = i - patternLength + 1;
                         
-                        // Record for display
-                        int idx = atomicAdd(matchCount, 1);
-                        if (idx < maxMatches) {
-                            matchPositions[idx] = matchPos;
-                            matchPatternIds[idx] = patternIndex;
+                        // Only process matches that start at our assigned position
+                        if (matchPos == startPos) {
+                            // Increment per-pattern match count
+                            atomicAdd(&matches[patternIndex], 1);
+                            
+                            // Record for display - safely limit the maximum number of matches recorded
+                            int idx = atomicAdd(matchCount, 1);
+                            if (idx < maxMatches) {
+                                matchPositions[idx] = matchPos;
+                                matchPatternIds[idx] = patternIndex;
+                            }
                         }
                     }
                 }
-                failState = states[failState].fail;
             }
             
-            // If we've gone beyond our responsibility for this thread, stop
+            // Safety check for current state (again)
+            if (currentState < 0 || currentState >= numStates) {
+                currentState = 0;
+                continue;
+            }
+            
+            // Now check all fail states for matches too - with iteration limit and bounds checking
+            int failState = states[currentState].fail;
+            int failChainIteration = 0;
+            
+            while (failState != 0 && failState > 0 && failState < numStates && failChainIteration < MAX_FAIL_ITERATIONS) {
+                int failOutputCount = states[failState].output_count;
+                
+                if (failOutputCount > 0 && failOutputCount <= patternCount) {
+                    int* failOutputs = stateOutputs[failState];
+                    for (int j = 0; j < failOutputCount; j++) {
+                        int patternIndex = failOutputs[j];
+                        
+                        // Validate pattern index
+                        if (patternIndex >= 0 && patternIndex < patternCount) {
+                            int patternLength = patternLengths[patternIndex];
+                            int matchPos = i - patternLength + 1;
+                            
+                            // Only process matches that start at our assigned position
+                            if (matchPos == startPos) {
+                                // Increment per-pattern match count
+                                atomicAdd(&matches[patternIndex], 1);
+                                
+                                // Record for display
+                                int idx = atomicAdd(matchCount, 1);
+                                if (idx < maxMatches) {
+                                    matchPositions[idx] = matchPos;
+                                    matchPatternIds[idx] = patternIndex;
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                int nextFailState = states[failState].fail;
+                // Validate the next fail state
+                if (nextFailState < 0 || nextFailState >= numStates) {
+                    break; // Exit the loop on invalid fail state
+                }
+                
+                failState = nextFailState;
+                failChainIteration++;
+            }
+            
+            // If we've gone beyond our responsibility or reached root state, stop
             if (i > startPos && currentState == 0) {
                 break; // No match possible anymore, so move to next starting position
             }
@@ -311,6 +435,33 @@ int main() {
         printf("... (showing only first 10 patterns)\n");
     }
     
+    // First test CUDA functionality with a simple kernel
+    printf("Testing CUDA functionality...\n");
+    int* d_test;
+    int h_test = 0;
+    cudaError_t testErr = cudaMalloc(&d_test, sizeof(int));
+    if (testErr != cudaSuccess) {
+        printf("CUDA malloc failed for test: %s\n", cudaGetErrorString(testErr));
+        return 1;
+    }
+    
+    cudaMemcpy(d_test, &h_test, sizeof(int), cudaMemcpyHostToDevice);
+    testKernel<<<1, 1>>>(d_test);
+    cudaError_t syncErr = cudaDeviceSynchronize();
+    if (syncErr != cudaSuccess) {
+        printf("CUDA sync failed for test: %s\n", cudaGetErrorString(syncErr));
+        return 1;
+    }
+    
+    cudaMemcpy(&h_test, d_test, sizeof(int), cudaMemcpyDeviceToHost);
+    printf("Test result: %d (should be 42)\n", h_test);
+    cudaFree(d_test);
+    
+    if (h_test != 42) {
+        printf("CUDA test failed! Not proceeding with main algorithm.\n");
+        return 1;
+    }
+    
     // Build the Aho-Corasick automaton on CPU
     TrieNode* root = new TrieNode();
     for (int i = 0; i < (int)patterns.size(); ++i) {
@@ -326,6 +477,9 @@ int main() {
     
     printf("Created automaton with %d states\n", numStates);
     
+    // Verify automaton structure
+    verifyAutomaton(cpuStates, numStates);
+    
     // Create pattern lengths array
     int* patternLengths = new int[patterns.size()];
     for (size_t i = 0; i < patterns.size(); i++) {
@@ -340,7 +494,9 @@ int main() {
     int* d_matchPositions;  // Array to store match positions for display
     int* d_matchPatternIds;  // Array to store pattern IDs for display
     int* d_patternLengths;
+    int** d_stateOutputs;  // Array of pointers to output arrays for each state
     
+    // Alokasi memori untuk struktur utama
     cudaCheckError(cudaMalloc(&d_text, text_length * sizeof(char)));
     cudaCheckError(cudaMalloc(&d_states, numStates * sizeof(GPUTrieState)));
     cudaCheckError(cudaMalloc(&d_matches, patterns.size() * sizeof(int)));
@@ -348,6 +504,21 @@ int main() {
     cudaCheckError(cudaMalloc(&d_matchPositions, MAX_DISPLAY * sizeof(int)));
     cudaCheckError(cudaMalloc(&d_matchPatternIds, MAX_DISPLAY * sizeof(int)));
     cudaCheckError(cudaMalloc(&d_patternLengths, patterns.size() * sizeof(int)));
+    
+    // Setup state outputs (pointer array to output arrays)
+    cudaCheckError(cudaMalloc(&d_stateOutputs, numStates * sizeof(int*)));
+    int** h_stateOutputs = new int*[numStates];
+    
+    // Create and copy output arrays for each state
+    for (int i = 0; i < numStates; i++) {
+        int* d_output;
+        cudaCheckError(cudaMalloc(&d_output, MAX_PATTERNS * sizeof(int)));
+        cudaCheckError(cudaMemcpy(d_output, cpuStates[i].output, MAX_PATTERNS * sizeof(int), cudaMemcpyHostToDevice));
+        h_stateOutputs[i] = d_output;
+    }
+    
+    // Copy the array of pointers to GPU
+    cudaCheckError(cudaMemcpy(d_stateOutputs, h_stateOutputs, numStates * sizeof(int*), cudaMemcpyHostToDevice));
     
     // Initialize arrays
     int* patternMatches = new int[patterns.size()]();  // Initialize to zeros
@@ -369,22 +540,59 @@ int main() {
     // Record the start event
     cudaEventRecord(start);
     
-    // Launch kernel
+    // Launch kernel with limited grid size to prevent resource overload
     int blockSize = THREADS_PER_BLOCK;
-    int gridSize = (text_length + blockSize - 1) / blockSize;
+    int gridSize = min(1024, (text_length + blockSize - 1) / blockSize);
     printf("Launching kernel with grid size: %d, block size: %d\n", gridSize, blockSize);
     
     ahoCorasickKernel<<<gridSize, blockSize>>>(
         d_text, text_length, d_states, numStates, 
         d_matches, d_matchCount, d_matchPositions, d_matchPatternIds,
-        MAX_DISPLAY, d_patternLengths, patterns.size()
+        MAX_DISPLAY, d_patternLengths, patterns.size(), d_stateOutputs
     );
     
     // Check for kernel launch errors
-    cudaCheckError(cudaGetLastError());
+    cudaError_t kernelError = cudaGetLastError();
+    if (kernelError != cudaSuccess) {
+        printf("Kernel launch error: %s\n", cudaGetErrorString(kernelError));
+        // Clean up and exit
+        delete[] cpuStates;
+        delete[] patternLengths;
+        delete[] patternMatches;
+        delete root;
+        cudaFree(d_text);
+        cudaFree(d_states);
+        cudaFree(d_matches);
+        cudaFree(d_matchCount);
+        cudaFree(d_matchPositions);
+        cudaFree(d_matchPatternIds);
+        cudaFree(d_patternLengths);
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+        return 1;
+    }
     
-    // Wait for kernel to finish
-    cudaCheckError(cudaDeviceSynchronize());
+    // Wait for kernel to finish with timeout detection
+    printf("Waiting for kernel to complete...\n");
+    cudaError_t syncError = cudaDeviceSynchronize();
+    if (syncError != cudaSuccess) {
+        printf("Synchronization error: %s\n", cudaGetErrorString(syncError));
+        // Clean up and exit
+        delete[] cpuStates;
+        delete[] patternLengths;
+        delete[] patternMatches;
+        delete root;
+        cudaFree(d_text);
+        cudaFree(d_states);
+        cudaFree(d_matches);
+        cudaFree(d_matchCount);
+        cudaFree(d_matchPositions);
+        cudaFree(d_matchPatternIds);
+        cudaFree(d_patternLengths);
+        cudaEventDestroy(start);
+        cudaEventDestroy(stop);
+        return 1;
+    }
     
     // Record the stop event
     cudaEventRecord(stop);
@@ -405,37 +613,49 @@ int main() {
                             min(totalMatchCount, MAX_DISPLAY) * sizeof(int), cudaMemcpyDeviceToHost));
     cudaCheckError(cudaMemcpy(patternMatches, d_matches, patterns.size() * sizeof(int), cudaMemcpyDeviceToHost));
     
-    // Check for CUDA errors
-    cudaError_t cudaError = cudaGetLastError();
-    if (cudaError != cudaSuccess) {
-        printf("CUDA error: %s\n", cudaGetErrorString(cudaError));
-    }
-    
     // Output results
+    printf("\nResults:\n");
     for (int i = 0; i < min(totalMatchCount, MAX_DISPLAY); i++) {
-        printf("Pattern found at index %d\n", matchPositions[i]);
+        int patternId = matchPatternIds[i];
+        if (patternId >= 0 && patternId < (int)patterns.size()) {
+            printf("Pattern '%s' found at position %d\n", 
+                   patterns[patternId].c_str(), matchPositions[i]);
+        } else {
+            printf("Invalid pattern ID found: %d\n", patternId);
+        }
     }
     
     if (totalMatchCount > MAX_DISPLAY) {
-        printf("... (showing only first %d matches)\n", MAX_DISPLAY);
+        printf("... (showing only first %d of %d matches)\n", MAX_DISPLAY, totalMatchCount);
     }
     
     // Output match counts for each pattern
     int totalMatches = 0;
+    printf("\nMatch counts by pattern:\n");
     for (size_t i = 0; i < patterns.size(); i++) {
         printf("Pattern '%s': %d matches\n", patterns[i].c_str(), patternMatches[i]);
         totalMatches += patternMatches[i];
     }
     
-    printf("Total matches found across all patterns: %d\n", totalMatches);
+    printf("\nTotal matches found across all patterns: %d\n", totalMatches);
     printf("Execution time: %.2f ms\n", milliseconds);
     
-    // Free memory
+    // Free memory - clean up dynamically allocated arrays
+    for (int i = 0; i < MAX_STATES; i++) {
+        delete[] cpuStates[i].output;
+    }
     delete[] cpuStates;
     delete[] patternLengths;
     delete[] patternMatches;
     delete root;
     
+    // Free GPU memory
+    for (int i = 0; i < numStates; i++) {
+        cudaFree(h_stateOutputs[i]);
+    }
+    delete[] h_stateOutputs;
+    
+    cudaFree(d_stateOutputs);
     cudaFree(d_text);
     cudaFree(d_states);
     cudaFree(d_matches);

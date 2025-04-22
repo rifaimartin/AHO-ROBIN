@@ -1,7 +1,7 @@
 import random
 import argparse
 
-def generate_genome_patterns(pattern_length=5, num_patterns=1000, output_file="patterns.txt"):
+def generate_genome_patterns(pattern_length=5, num_patterns=1000, output_file=None):
     """
     Generate random DNA patterns of specified length
     
@@ -10,6 +10,9 @@ def generate_genome_patterns(pattern_length=5, num_patterns=1000, output_file="p
         num_patterns: Number of patterns to generate
         output_file: File to save the patterns
     """
+    if output_file is None:
+        output_file = f"pattern_{num_patterns}.txt"
+        
     nucleotides = ['A', 'C', 'G', 'T']
     patterns = set()  # Use a set to avoid duplicates
     
@@ -29,7 +32,7 @@ def generate_genome_patterns(pattern_length=5, num_patterns=1000, output_file="p
     print(f"Saved to {output_file}")
     
     # Print sample of patterns
-    sample_size = min(30, len(patterns_list))
+    sample_size = min(8, len(patterns_list))
     print(f"\nSample of {sample_size} patterns:")
     for i in range(sample_size):
         print(patterns_list[i], end=",")
@@ -38,12 +41,16 @@ def generate_genome_patterns(pattern_length=5, num_patterns=1000, output_file="p
 def main():
     parser = argparse.ArgumentParser(description='Generate random DNA patterns')
     parser.add_argument('--length', type=int, default=5, help='Length of each pattern')
-    parser.add_argument('--count', type=int, default=1000, help='Number of patterns to generate')
-    parser.add_argument('--output', type=str, default='patterns.txt', help='Output file name')
+    parser.add_argument('--counts', nargs='+', type=int, 
+                        default=[8, 16, 32, 64, 128, 256, 512, 1024], 
+                        help='List of pattern counts to generate')
     
     args = parser.parse_args()
     
-    generate_genome_patterns(args.length, args.count, args.output)
+    # Generate patterns for each count value
+    for count in args.counts:
+        output_file = f"pattern_{count}.txt"
+        generate_genome_patterns(args.length, count, output_file)
 
 if __name__ == "__main__":
     main()

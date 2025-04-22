@@ -2,23 +2,37 @@
 
 This project implements and compares two popular string matching algorithms (Aho-Corasick and Rabin-Karp) in parallel using CUDA for high-performance DNA sequence analysis. The implementation focuses on leveraging GPU acceleration to significantly improve the processing speed of large-scale genomic data.
 
-# Compilation 
+## CUDA Implementations
 
-* Rabin-Karp Cuda : 
-- nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
-- nsys profile -o report-robinKarp-1juta --stats=true ./rabinKarpCuda.exe
-- nsys stats report-robinKarp-1juta.nsys-rep --report summary --format csv -o summary_output_report-robinKarp-1juta.nsys-rep
+### Rabin-Karp Cuda :
+~~~bash
+nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
+nsys profile -o report-robinKarp-1juta --stats=true ./rabinKarpCuda.exe
+nsys stats report-robinKarp-1juta.nsys-rep --report summary --format csv -o summary_output_report-robinKarp-1juta.nsys-rep
+~~~
 
-* Aho-Corasick Cuda : 
-- nvcc -o AhoCorasickCuda AhoCorasickCuda.cu
-- nsys profile -o report-AhoCorasickCuda-1juta --stats=true ./AhoCorasickCuda.exe
-- nsys stats report-AhoCorasickCuda-1juta.nsys-rep --report summary --format csv -o summary_output_report-AhoCorasickCuda-1juta.nsys-rep
+### Aho-Corasick Cuda : 
+~~~bash
+nvcc -o AhoCorasickCuda AhoCorasickCuda.cu
+nsys profile -o report-AhoCorasickCuda-1juta --stats=true ./AhoCorasickCuda.exe
+nsys stats report-AhoCorasickCuda-1juta.nsys-rep --report summary --format csv -o summary_output_report-AhoCorasickCuda-1juta.nsys-rep
+~~~
 
-* Rabin-Karp Sequence :
-- gcc -o rabinKarp rabinKarp.cpp
+## Sequential Implementations
 
-* Aho-Corrasic Sequence :
-- g++ -o AhoCorasickFixed AhoCorasickFixed.cpp
+### Rabin-Karp Sequence :
+~~~bash
+gcc -o rabinKarp rabinKarp.cpp
+~~~
+
+### Aho-Corasick Sequence :
+~~~bash
+g++ -o AhoCorasickFixed AhoCorasickFixed.cpp
+~~~
+
+## Compilation and Profiling Instructions
+
+- Ensure CUDA Toolkit and necessary compilers are installed
 
 # Dataset :
 https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40/

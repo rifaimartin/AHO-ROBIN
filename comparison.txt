@@ -1,0 +1,13 @@
+
+#RABIN KARP SEQUENCE - 10JUTA
+Total matches found across all patterns: 9796471
+Execution time: 123109.00 ms
+
+#RABIN KARP CUDA - 10 JUTA 
+Total matches found across all patterns: 9796471
+Execution time: 404.86 ms
+
+
+#AHO CORASIC SEQUENCE - 10 JUTA 
+Total matches found across all patterns: 9796471
+Execution time: 4578 ms

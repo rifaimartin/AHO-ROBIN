@@ -6,14 +6,15 @@ This project implements and compares two popular string matching algorithms (Aho
 
 ### Rabin-Karp Cuda :
 ~~~bash
-nvcc -o rabinKarpCUDA rabinKarpCUDA.cu
-nsys profile -o report-robinKarp-1juta --stats=true ./rabinKarpCuda.exe
-nsys stats report-robinKarp-1juta.nsys-rep --report summary --format csv -o summary_output_report-robinKarp-1juta.nsys-rep
+nvcc -o rabinKarpCuda rabinKarpCuda.cu
+nsys profile -o report-robinKarp-8-10m --stats=true ./rabinKarpCuda.exe
+nsys stats report-robinKarp-8-10m.nsys-rep --report summary --format csv -o summary_output_report-robinKarp-8-10m.nsys-rep
 ~~~
 
 ### Aho-Corasick Cuda : 
 ~~~bash
 nvcc -o AhoCorasickCuda AhoCorasickCuda.cu
+nvcc -o PFAC-ahoCorasick PFAC-ahoCorasick.cu
 nsys profile -o report-AhoCorasickCuda-1juta --stats=true ./AhoCorasickCuda.exe
 nsys stats report-AhoCorasickCuda-1juta.nsys-rep --report summary --format csv -o summary_output_report-AhoCorasickCuda-1juta.nsys-rep
 ~~~

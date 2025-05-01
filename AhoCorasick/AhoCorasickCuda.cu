@@ -634,7 +634,7 @@ int main(int argc, char** argv) {
     
     // Use smaller grid size for better stability
     int blockSize = THREADS_PER_BLOCK;
-    int gridSize = min(64, (text_length + blockSize - 1) / blockSize);  // Reduced grid size
+    int gridSize = (text_length + blockSize - 1) / blockSize;  // Reduced grid size
     
     printf("Launching improved Aho-Corasick kernel with grid size: %d, block size: %d\n", gridSize, blockSize);
     

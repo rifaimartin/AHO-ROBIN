@@ -4,6 +4,7 @@
         "*.embeddedhtml": "html",
         "format": "cpp",
         "xstring": "cpp",
-        "iostream": "cpp"
+        "iostream": "cpp",
+        "vector": "cpp"
     }
 }

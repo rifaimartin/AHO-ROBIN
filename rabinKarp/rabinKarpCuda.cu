@@ -32,49 +32,61 @@ __device__ int compute_hash_gpu(char *str, int length, int d, int q) {
     return hash_value;
 }
 
-__global__ void rk_kernel(char *text, char *patterns, int *pattern_lengths, int *pattern_hashes, 
+__global__ void rk_kernel(char *text, char *patterns, int *pattern_lengths, int *pattern_hashes,
                           int *match_positions, int *match_pattern_ids, int *batch_match_count,
-                          int *pattern_match_counts, int text_length, int pattern_count, 
-                          int batch_offset, int d, int q) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
+                          int *pattern_match_counts, int text_length, int pattern_count,
+                          int batch_offset, int d, int q)
+{
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    int stride = blockDim.x * gridDim.x;
 
-    if (i >= text_length) return;
+    // Process multiple positions per thread using stride
+    for (int i = tid; i < text_length; i += stride)
+    {
+        // Each thread handles patterns at its assigned positions
+        for (int p = 0; p < pattern_count; p++)
+        {
+            int pattern_length = pattern_lengths[p];
+            int pattern_hash = pattern_hashes[p];
 
-    // Each thread handles a position in the text
-    for (int p = 0; p < pattern_count; p++) {
-        int pattern_length = pattern_lengths[p];
-        int pattern_hash = pattern_hashes[p];
-        
-        // Skip if we don't have enough characters left
-        if (i > text_length - pattern_length) continue;
+            // Skip if we don't have enough characters left
+            if (i > text_length - pattern_length)
+                continue;
 
-        // Compute the hash of the current window
-        int hash_value = 0;
-        for (int j = 0; j < pattern_length; j++) {
-            hash_value = (d * hash_value + text[i + j]) % q;
-        }
-
-        if (hash_value == pattern_hash) {
-            bool match = true;
-            for (int j = 0; j < pattern_length; j++) {
-                if (text[i + j] != patterns[p * MAX_PATTERN_SIZE + j]) {
-                    match = false;
-                    break;
-                }
+            // Compute the hash of the current window
+            int hash_value = 0;
+            for (int j = 0; j < pattern_length; j++)
+            {
+                hash_value = (d * hash_value + text[i + j]) % q;
             }
 
-            if (match) {
-                // Get global pattern index
-                int global_pattern_idx = batch_offset + p;
-                
-                // Increment per-pattern match count
-                atomicAdd(&pattern_match_counts[global_pattern_idx], 1);
-                
-                // Store position and pattern ID for display
-                int idx = atomicAdd(batch_match_count, 1);
-                if (idx < MAX_DISPLAY) {
-                    match_positions[idx] = i;
-                    match_pattern_ids[idx] = global_pattern_idx;
+            if (hash_value == pattern_hash)
+            {
+                bool match = true;
+                for (int j = 0; j < pattern_length; j++)
+                {
+                    if (text[i + j] != patterns[p * MAX_PATTERN_SIZE + j])
+                    {
+                        match = false;
+                        break;
+                    }
+                }
+
+                if (match)
+                {
+                    // Get global pattern index
+                    int global_pattern_idx = batch_offset + p;
+
+                    // Increment per-pattern match count
+                    atomicAdd(&pattern_match_counts[global_pattern_idx], 1);
+
+                    // Store position and pattern ID for display
+                    int idx = atomicAdd(batch_match_count, 1);
+                    if (idx < MAX_DISPLAY)
+                    {
+                        match_positions[idx] = i;
+                        match_pattern_ids[idx] = global_pattern_idx;
+                    }
                 }
             }
         }
@@ -270,7 +282,8 @@ int main() {
         
         // Launch kernel
         int blockSize = 256;
-        int gridSize = (text_length + blockSize - 1) / blockSize;
+        // int gridSize = (text_length + blockSize - 1) / blockSize;
+        int gridSize = min(64, (text_length + blockSize - 1) / blockSize);  // Reduced grid size
         
         rk_kernel<<<gridSize, blockSize>>>(d_text, d_patterns, d_pattern_lengths, d_pattern_hashes,
                                       d_match_positions, d_match_pattern_ids, d_batch_match_count,

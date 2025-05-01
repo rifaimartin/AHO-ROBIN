@@ -1,4 +1,4 @@
-def extract_first_million(input_file, output_file, length=10000000, make_uppercase=True):
+def extract_first_million(input_file, output_file, length=100000, make_uppercase=True):
     """
     Extract first 'length' base pairs from FASTA file, skipping header lines.
     Optionally convert all bases to uppercase or lowercase.
@@ -60,7 +60,7 @@ def extract_first_million(input_file, output_file, length=10000000, make_upperca
 
 # File paths - adjust these to match your actual file paths
 input_file = 'GCA_000001405.29_GRCh38.p14_genomic.fna'
-output_file = 'human_10m_upper.txt'
+output_file = 'human_10000_upper.txt'
 
 # Extract 1 million base pairs and convert all to uppercase
 print("Starting extraction script...")
